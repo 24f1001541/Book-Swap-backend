@@ -112,3 +112,52 @@ def delete_book(book_id):
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+    
+@app.route("/upload", methods=["POST"])
+def upload_book():
+    try:
+        print("🟢 Step 1: Starting upload")
+        title = request.form.get("title")
+        author = request.form.get("author")
+        image = request.files.get("image")
+        if not title or not author or not image:
+            return jsonify({"error": "Missing title, author, or image"}), 400
+
+        print("🟢 Step 2: Connecting to S3...")
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            region_name=os.getenv("AWS_REGION"),
+        )
+        bucket = os.getenv("S3_BUCKET_NAME")
+        filename = secure_filename(image.filename)
+
+        print("🟢 Step 3: Uploading file to S3...")
+        s3.upload_fileobj(image, bucket, filename)
+        print("✅ Step 4: S3 upload complete")
+
+        image_url = f"https://{bucket}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{filename}"
+
+        print("🟢 Step 5: Connecting to RDS...")
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        print("🟢 Step 6: Inserting record into DB...")
+        cur.execute(
+            """
+            INSERT INTO books (title, author, image_url, user_id, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (title, author, image_url, "test-user", datetime.utcnow()),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("✅ Step 7: DB insert complete")
+
+        return jsonify({"message": "Book uploaded successfully"}), 200
+
+    except Exception as e:
+        print("❌ Upload failed:", str(e))
+        return jsonify({"error": str(e)}), 500
